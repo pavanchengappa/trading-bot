@@ -103,6 +103,7 @@ class Settings:
         }
         
         self.config = self.load_config()
+        print("Loaded config:", self.config)  # DEBUG: Show loaded config
     
     def load_config(self) -> Dict[str, Any]:
         """Load configuration from file"""
@@ -155,6 +156,9 @@ class Settings:
     def get_backtest_config(self) -> Dict[str, Any]:
         """Get backtesting configuration"""
         return self.config.get("backtest_config", {})
+    
+    def get_portfolio_config(self):
+        return self.config.get("portfolio_config", {})
     
     def update_config(self, section: str, key: str, value: Any):
         """Update a configuration value"""

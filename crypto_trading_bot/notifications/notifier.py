@@ -90,8 +90,7 @@ class Notifier:
             url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
             data = {
                 'chat_id': self.telegram_chat_id,
-                'text': telegram_message,
-                'parse_mode': 'MarkdownV2'
+                'text': telegram_message
             }
             
             response = requests.post(url, data=data, timeout=10)

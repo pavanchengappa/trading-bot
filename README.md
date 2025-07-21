@@ -114,6 +114,7 @@ python crypto_trading_bot/main.py --mode trade
 ```bash
 python crypto_trading_bot/main.py --mode trade --gui
 ```
+python -m crypto_trading_bot.main --mode trade --gui 
 
 **Backtesting Mode**:
 ```bash
@@ -196,27 +197,48 @@ Configure SMTP settings in the configuration:
 ```
 crypto-bot/
 ├── crypto_trading_bot/
-│   ├── config/
-│   │   └── settings.py          # Configuration management
-│   ├── core/
-│   │   ├── bot.py              # Main trading bot
-│   │   ├── strategies.py       # Trading strategies
-│   │   └── risk_manager.py     # Risk management
-│   ├── database/
-│   │   └── models.py           # Database models
-│   ├── notifications/
-│   │   └── notifier.py         # Notification system
-│   ├── ui/
-│   │   ├── cli.py              # Command-line interface
-│   │   └── gui.py              # Graphical interface
 │   ├── backtesting/
-│   │   └── backtest_engine.py  # Backtesting engine
+│   │   ├── __init__.py
+│   │   └── backtest_engine.py
+│   ├── config/
+│   │   └── settings.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── adaptive_strategy.py
+│   │   ├── bot.py
+│   │   ├── portfolio_manager.py
+│   │   ├── risk_manager.py
+│   │   ├── strategies.py
+│   │   └── trade_signal.py
+│   ├── database/
+│   │   ├── __init__.py
+│   │   └── models.py
+│   ├── logs/
+│   ├── main.py
+│   ├── notifications/
+│   │   ├── __init__.py
+│   │   └── notifier.py
+│   ├── optimize_adaptive_params.py
+│   ├── set_binance_api.py
+│   ├── test_backtest_2years.py
+│   ├── test_binance_data.py
+│   ├── test_random_strategy.py
+│   ├── ui/
+│   │   ├── __init__.py
+│   │   ├── cli.py
+│   │   └── gui.py
 │   ├── utils/
-│   │   └── logger.py           # Logging utilities
-│   └── main.py                 # Entry point
-├── logs/                       # Log files
-├── requirements.txt            # Dependencies
-└── README.md                   # This file
+│   │   ├── __init__.py
+│   │   ├── binance_data.py
+│   │   └── logger.py
+├── logs/
+├── README.md
+├── config.json
+├── requirements.txt
+├── setup.py
+├── test_api.py
+├── test_backtest_fix.py
+├── test_installation.py
 ```
 
 ## 🔒 Security

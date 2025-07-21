@@ -9,6 +9,7 @@ from crypto_trading_bot.config.settings import Settings
 from crypto_trading_bot.core.bot import TradingBot
 from crypto_trading_bot.ui.cli import CLI
 from crypto_trading_bot.utils.logger import setup_logging
+from crypto_trading_bot.ui.gui import TradingBotGUI
 
 def main():
     """Main entry point for the trading bot."""
@@ -52,9 +53,8 @@ def main():
         else:
             # Trading mode
             if args.gui:
-                from crypto_trading_bot.ui.gui import GUI
                 try:
-                    gui = GUI(settings)
+                    gui = TradingBotGUI()
                     gui.run()
                 except Exception as gui_e:
                     logger.error(f"Error launching GUI: {gui_e}")
