@@ -340,5 +340,12 @@ pip install -r requirements.txt --upgrade
 ```
 
 ---
+## Screenshots
+<img width="1499" height="1039" alt="image" src="https://github.com/user-attachments/assets/5813da92-3b3f-4670-9f1f-de7e21ca449d" />
+<img width="1504" height="1001" alt="image" src="https://github.com/user-attachments/assets/04dfe1dd-674e-4498-8dd0-48b9cf4f09f9" />
+<img width="1497" height="1043" alt="image" src="https://github.com/user-attachments/assets/0c1fe281-96d0-49a3-a699-01364c041a03" />
+<img width="1498" height="1043" alt="image" src="https://github.com/user-attachments/assets/f8f864f4-13da-4292-b998-82458cda64cb" />
+<img width="1501" height="1042" alt="image" src="https://github.com/user-attachments/assets/d9e94701-7383-49a7-81c7-effef53683f0" />
+
 
 **Happy Trading! 🚀** 
