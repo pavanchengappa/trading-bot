@@ -112,7 +112,7 @@ python crypto_trading_bot/main.py --mode trade
 
 **GUI Mode**:
 ```bash
-python crypto_trading_bot/main.py --mode trade --gui
+python -m crypto_trading_bot.main --mode trade --gui 
 ```
 python -m crypto_trading_bot.main --mode trade --gui 
 
