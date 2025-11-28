@@ -11,7 +11,7 @@ A locally-deployed cryptocurrency trading bot that leverages the Binance API to 
   - RSI-based overbought/oversold
   - Bollinger Bands breakout
 - **Automated Trading**: Scheduler to poll price data and execute orders automatically
-- **Risk Management**: Stop-loss, take-profit, daily loss limits, and maximum drawdown controls
+- **Risk Management**: Stop-loss, take-profit, daily loss limits, maximum drawdown controls, and volatility-based risk limits
 - **Transaction Recording**: SQLite database for storing all trades and performance data
 
 ### User Interface
@@ -43,7 +43,7 @@ A locally-deployed cryptocurrency trading bot that leverages the Binance API to 
 2. **Create a virtual environment**:
    ```bash
    python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   venv\Scripts\activate
    ```
 
 3. **Install dependencies**:
@@ -63,7 +63,7 @@ A locally-deployed cryptocurrency trading bot that leverages the Binance API to 
 
 Run the configuration wizard:
 ```bash
-python crypto_trading_bot/main.py --mode config
+python -m crypto_trading_bot.main --mode config
 ```
 
 This will guide you through:
@@ -107,24 +107,23 @@ The bot supports the following configuration options:
 
 **CLI Mode**:
 ```bash
-python crypto_trading_bot/main.py --mode trade
+python -m crypto_trading_bot.main --mode trade
 ```
 
 **GUI Mode**:
 ```bash
 python -m crypto_trading_bot.main --mode trade --gui 
 ```
-python -m crypto_trading_bot.main --mode trade --gui 
 
 **Backtesting Mode**:
 ```bash
-python crypto_trading_bot/main.py --mode backtest
+python -m crypto_trading_bot.main --mode backtest
 ```
 
 ### Command Line Options
 
 ```bash
-python crypto_trading_bot/main.py [OPTIONS]
+python -m crypto_trading_bot.main [OPTIONS]
 
 Options:
   --config, -c PATH    Path to configuration file
@@ -140,6 +139,7 @@ The GUI provides:
 - Real-time bot status
 - Performance dashboard
 - Trade history
+- Manual position management (Close/Close All)
 - Configuration management
 - Log viewer
 
@@ -149,16 +149,16 @@ Once the bot is running, you can use these commands:
 
 ```bash
 # Show bot status
-python crypto_trading_bot/main.py --mode config --status
+python -m crypto_trading_bot.main --mode config --status
 
 # View recent trades
-python crypto_trading_bot/main.py --mode config --trades
+python -m crypto_trading_bot.main --mode config --trades
 
 # Export trades to CSV
-python crypto_trading_bot/main.py --mode config --export-trades output.csv
+python -m crypto_trading_bot.main --mode config --export-trades output.csv
 
 # Validate configuration
-python crypto_trading_bot/main.py --mode config --validate
+python -m crypto_trading_bot.main --mode config --validate
 ```
 
 ## 📊 Backtesting
@@ -167,10 +167,10 @@ Test your strategies on historical data:
 
 ```bash
 # Run backtest with default settings
-python crypto_trading_bot/main.py --mode backtest
+python -m crypto_trading_bot.main --mode backtest
 
 # Run backtest with custom parameters
-python crypto_trading_bot/main.py --mode backtest --start-date 2023-01-01 --end-date 2023-12-31
+python -m crypto_trading_bot.main --mode backtest --start-date 2023-01-01 --end-date 2023-12-31
 ```
 
 Backtest results include:
@@ -218,11 +218,6 @@ crypto-bot/
 │   ├── notifications/
 │   │   ├── __init__.py
 │   │   └── notifier.py
-│   ├── optimize_adaptive_params.py
-│   ├── set_binance_api.py
-│   ├── test_backtest_2years.py
-│   ├── test_binance_data.py
-│   ├── test_random_strategy.py
 │   ├── ui/
 │   │   ├── __init__.py
 │   │   ├── cli.py
@@ -232,13 +227,20 @@ crypto-bot/
 │   │   ├── binance_data.py
 │   │   └── logger.py
 ├── logs/
+├── scripts/
+│   ├── optimize_adaptive_params.py
+│   └── set_binance_api.py
+├── tests/
+│   ├── test_api.py
+│   ├── test_backtest_2years.py
+│   ├── test_backtest_fix.py
+│   ├── test_binance_data.py
+│   ├── test_installation.py
+│   └── test_random_strategy.py
 ├── README.md
 ├── config.json
 ├── requirements.txt
-├── setup.py
-├── test_api.py
-├── test_backtest_fix.py
-├── test_installation.py
+└── setup.py
 ```
 
 ## 🔒 Security
@@ -291,8 +293,8 @@ pytest --cov=crypto_trading_bot tests/
 - Use testnet for initial testing
 
 **Configuration Errors**:
-- Run configuration wizard: `python crypto_trading_bot/main.py --mode config`
-- Validate configuration: `python crypto_trading_bot/main.py --mode config --validate`
+- Run configuration wizard: `python -m crypto_trading_bot.main --mode config`
+- Validate configuration: `python -m crypto_trading_bot.main --mode config --validate`
 
 **Database Errors**:
 - Check file permissions

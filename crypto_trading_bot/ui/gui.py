@@ -425,16 +425,30 @@ class TradingBotGUI:
             messagebox.showwarning("Warning", "Please select a position to close")
             return
         
-        # TODO: Implement position closing logic
-        messagebox.showinfo("Info", "Position closing not yet implemented")
+        position_key = selection[0]  # We use position_key as iid
+        
+        if self.bot and self.bot.running:
+            if self.bot.close_position(position_key):
+                self.add_log(f"Closed position {position_key}", "success")
+                messagebox.showinfo("Success", "Position closed successfully")
+            else:
+                messagebox.showerror("Error", "Failed to close position")
+        else:
+            messagebox.showwarning("Warning", "Bot is not running")
     
     def close_all_positions(self):
         """Close all open positions"""
         if not messagebox.askyesno("Confirm", "Are you sure you want to close all positions?"):
             return
         
-        # TODO: Implement close all positions logic
-        messagebox.showinfo("Info", "Close all positions not yet implemented")
+        if self.bot and self.bot.running:
+            if self.bot.close_all_positions():
+                self.add_log("Closed all positions", "success")
+                messagebox.showinfo("Success", "All positions closed successfully")
+            else:
+                messagebox.showerror("Error", "Failed to close positions")
+        else:
+            messagebox.showwarning("Warning", "Bot is not running")
     
     def clear_logs(self):
         """Clear log display"""
@@ -562,7 +576,8 @@ class TradingBotGUI:
                 
                 # Color code based on P&L
                 tag = 'profit' if pnl >= 0 else 'loss'
-                self.positions_tree.insert('', 'end', values=values, tags=(tag,))
+                # Use position_key as iid for easy retrieval
+                self.positions_tree.insert('', 'end', iid=pos.get('position_key'), values=values, tags=(tag,))
             
             # Configure tags
             self.positions_tree.tag_configure('profit', foreground=self.success_color)

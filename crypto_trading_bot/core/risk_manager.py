@@ -37,8 +37,9 @@ class RiskManager:
         self.max_drawdown = trading_config.get('max_drawdown', 0.20)
         self.stop_loss_pct = trading_config.get('stop_loss_percentage', 0.05)
         self.take_profit_pct = trading_config.get('take_profit_percentage', 0.10)
+        self.max_volatility = trading_config.get('max_volatility', 10.0)  # Max 10% volatility
     
-    def check_risk_limits(self, signal: TradeSignal) -> bool:
+    def check_risk_limits(self, signal: TradeSignal, volatility: float = 0.0) -> bool:
         """Check if trade signal meets risk management criteria"""
         try:
             # Reset daily stats if needed
@@ -62,8 +63,8 @@ class RiskManager:
             if not self._check_drawdown_limits():
                 return False
             
-            # Check market volatility (optional)
-            if not self._check_volatility_limits(signal):
+            # Check market volatility
+            if not self._check_volatility_limits(signal, volatility):
                 return False
             
             return True
@@ -105,10 +106,11 @@ class RiskManager:
         
         return True
     
-    def _check_volatility_limits(self, signal: TradeSignal) -> bool:
+    def _check_volatility_limits(self, signal: TradeSignal, volatility: float) -> bool:
         """Check volatility-based risk limits"""
-        # This is a placeholder for volatility checks
-        # In a real implementation, you'd calculate volatility metrics
+        if volatility > self.max_volatility:
+            logger.warning(f"Volatility too high for {signal.symbol}: {volatility:.2f}% > {self.max_volatility}%")
+            return False
         return True
     
     def record_trade(self, trade_data: Dict):

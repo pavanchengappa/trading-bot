@@ -17,39 +17,42 @@ class EnhancedTradingStrategy:
             MarketCondition.TRENDING_UP: {
                 "name": "moving_average_crossover",
                 "parameters": {
-                    "short_window": 8,
-                    "long_window": 21,
-                    "min_crossover_strength": 0.001
+                    "short_window": 7,
+                    "long_window": 25,
+                    "min_crossover_strength": 0.002,
+                    "use_volume_confirmation": True
                 },
-                "weight": 0.6
+                "weight": 0.7
             },
             MarketCondition.TRENDING_DOWN: {
-                "name": "rsi_strategy",
+                "name": "moving_average_crossover",
                 "parameters": {
-                    "rsi_period": 14,
-                    "rsi_overbought": 70,
-                    "rsi_oversold": 30,
-                    "confirmation_periods": 1
+                    "short_window": 7,
+                    "long_window": 25,
+                    "min_crossover_strength": 0.002,
+                    "use_volume_confirmation": True
                 },
                 "weight": 0.7
             },
             MarketCondition.SIDEWAYS: {
                 "name": "bollinger_bands",
                 "parameters": {
-                    "bb_window": 14,
-                    "bb_std_dev": 1.8,
-                    "min_breakout_strength": 0.005
+                    "bb_window": 20,
+                    "bb_std_dev": 2.0,
+                    "min_breakout_strength": 0.005,
+                    "squeeze_threshold": 0.015
                 },
                 "weight": 0.8
             },
             MarketCondition.HIGH_VOLATILITY: {
-                "name": "bollinger_bands",
+                "name": "rsi_strategy",
                 "parameters": {
-                    "bb_window": 10,
-                    "bb_std_dev": 2.2,
-                    "min_breakout_strength": 0.008
+                    "rsi_period": 14,
+                    "rsi_overbought": 75,
+                    "rsi_oversold": 25,
+                    "dynamic_thresholds": True
                 },
-                "weight": 0.5
+                "weight": 0.6
             }
         }
 
@@ -150,17 +153,17 @@ PROFIT_OPTIMIZED_CONFIGS = {
     "conservative": {
         "name": "bollinger_bands",
         "parameters": {
-            "bb_window": 16,
-            "bb_std_dev": 1.9,
-            "min_breakout_strength": 0.004
+            "bb_window": 20,
+            "bb_std_dev": 2.0,
+            "min_breakout_strength": 0.005
         }
     },
     "aggressive": {
         "name": "rsi_strategy", 
         "parameters": {
-            "rsi_period": 10,
-            "rsi_overbought": 78,
-            "rsi_oversold": 22,
+            "rsi_period": 14,
+            "rsi_overbought": 75,
+            "rsi_oversold": 25,
             "confirmation_periods": 0
         }
     },
@@ -168,8 +171,8 @@ PROFIT_OPTIMIZED_CONFIGS = {
         "name": "moving_average_crossover",
         "parameters": {
             "short_window": 7,
-            "long_window": 18,
-            "min_crossover_strength": 0.0015
+            "long_window": 25,
+            "min_crossover_strength": 0.002
         }
     }
-} 
+}
