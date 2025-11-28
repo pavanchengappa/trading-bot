@@ -537,19 +537,101 @@ class TradingBotGUI:
             
             self.active_symbols_label.config(text=str(len(status.get('symbols', []))))
             
+            # Update market scanner with smart refresh
+            market_scanner = status.get('market_scanner', [])
+            market_scanner.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            # Get current items
+            existing_items = self.market_tree.get_children()
+            # Map symbol -> iid. Note: Scanner might have multiple entries per symbol if we aren't careful, 
+            # but usually we want to show the latest/best. 
+            # For simplicity and stability, let's use symbol as key if unique, otherwise index?
+            # Actually, let's just use the index in the list as the key for the treeview rows
+            # This ensures the top row is always the top score, etc.
+            
+            for i, opp in enumerate(market_scanner[:50]):
+                values = (
+                    opp.get('symbol', ''),
+                    f"${opp.get('price', 0):.2f}",
+                    f"{opp.get('volume_24h', 0):,.0f}",
+                    f"{opp.get('volatility', 0):.2f}%",
+                    f"{opp.get('score', 0):.1f}",
+                    opp.get('signal', '')
+                )
+                
+                if i < len(existing_items):
+                    # Update existing row
+                    self.market_tree.item(existing_items[i], values=values)
+                else:
+                    # Insert new row
+                    self.market_tree.insert('', 'end', values=values)
+            
+            # Remove extra rows
+            if len(existing_items) > len(market_scanner[:50]):
+                for i in range(len(market_scanner[:50]), len(existing_items)):
+                    self.market_tree.delete(existing_items[i])
+            
+            # Update recent trades
+            recent_trades = status.get('recent_trades', [])
+            
+            # Get current items
+            existing_trades = self.trades_tree.get_children()
+            
+            for i, trade in enumerate(recent_trades):
+                # Parse timestamp
+                timestamp = trade.get('timestamp', '')
+                if isinstance(timestamp, str):
+                    try:
+                        dt = datetime.fromisoformat(timestamp)
+                        time_str = dt.strftime('%H:%M:%S')
+                    except:
+                        time_str = timestamp
+                else:
+                    time_str = str(timestamp)
+                
+                values = (
+                    time_str,
+                    trade.get('symbol', ''),
+                    trade.get('side', ''),
+                    f"{trade.get('quantity', 0):.6f}",
+                    f"${trade.get('price', 0):.2f}",
+                    f"${trade.get('pnl', 0):.2f}" if trade.get('pnl') is not None else '-',
+                    f"{trade.get('score', 0):.1f}" if trade.get('score') else '-'
+                )
+                
+                if i < len(existing_trades):
+                    self.trades_tree.item(existing_trades[i], values=values)
+                else:
+                    self.trades_tree.insert('', 'end', values=values)
+            
+            # Remove extra rows
+            if len(existing_trades) > len(recent_trades):
+                for i in range(len(recent_trades), len(existing_trades)):
+                    self.trades_tree.delete(existing_trades[i])
+                    
         except Exception as e:
             logger.error(f"Error updating dashboard: {e}")
     
     def _update_positions(self, status):
-        """Update positions display"""
+        """Update positions display with smart refreshing"""
         try:
-            # Clear current items
-            for item in self.positions_tree.get_children():
-                self.positions_tree.delete(item)
-            
-            # Add current positions
             positions = status.get('positions', [])
+            
+            # Store current selection
+            selected_items = self.positions_tree.selection()
+            selected_iid = selected_items[0] if selected_items else None
+            
+            # Track processed position keys
+            processed_keys = set()
+            
             for pos in positions:
+                position_key = pos.get('position_key')
+                if not position_key:
+                    continue
+                    
+                processed_keys.add(position_key)
+                symbol = pos.get('symbol', '')
+                
                 entry_price = pos.get('entry_price', 0)
                 current_price = pos.get('current_price', entry_price)
                 quantity = pos.get('quantity', 0)
@@ -558,14 +640,20 @@ class TradingBotGUI:
                 pnl_percent = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
                 
                 entry_time = pos.get('entry_time', 'Unknown')
-                if isinstance(entry_time, datetime):
+                if isinstance(entry_time, str):
+                     try:
+                        entry_dt = datetime.fromisoformat(entry_time)
+                        duration = str(datetime.now() - entry_dt).split('.')[0]
+                     except:
+                        duration = "Unknown"
+                elif isinstance(entry_time, datetime):
                     duration = str(datetime.now() - entry_time).split('.')[0]
                 else:
                     duration = "Unknown"
                 
                 values = (
-                    pos.get('symbol', ''),
-                    'LONG',  # Assuming long positions for now
+                    symbol,
+                    pos.get('side', 'LONG'),
                     f"{quantity:.6f}",
                     f"${entry_price:.2f}",
                     f"${current_price:.2f}",
@@ -576,15 +664,30 @@ class TradingBotGUI:
                 
                 # Color code based on P&L
                 tag = 'profit' if pnl >= 0 else 'loss'
-                # Use position_key as iid for easy retrieval
-                self.positions_tree.insert('', 'end', iid=pos.get('position_key'), values=values, tags=(tag,))
+                
+                if self.positions_tree.exists(position_key):
+                    # Update existing
+                    self.positions_tree.item(position_key, values=values, tags=(tag,))
+                else:
+                    # Insert new with explicit iid
+                    self.positions_tree.insert('', 'end', iid=position_key, values=values, tags=(tag,))
             
-            # Configure tags
+            # Remove items that are no longer active
+            for iid in self.positions_tree.get_children():
+                if iid not in processed_keys:
+                    self.positions_tree.delete(iid)
+            
+            # Restore selection if it still exists
+            if selected_iid and self.positions_tree.exists(selected_iid):
+                self.positions_tree.selection_set(selected_iid)
+            
+            # Configure tags (ensure colors are applied)
             self.positions_tree.tag_configure('profit', foreground=self.success_color)
             self.positions_tree.tag_configure('loss', foreground=self.danger_color)
-            
+                
         except Exception as e:
             logger.error(f"Error updating positions: {e}")
+
     
     def _update_performance(self, status):
         """Update performance displays"""

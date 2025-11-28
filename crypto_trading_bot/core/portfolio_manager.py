@@ -65,11 +65,12 @@ class PortfolioManager:
             return False
         
         # Add to existing allocation or create new
-        current_allocation = self.position_allocations.get(symbol, 0)
-        new_allocation = current_allocation + amount
+        current_allocation = self.position_allocations.get(symbol, Decimal('0'))
+        amount_dec = Decimal(str(amount))
+        new_allocation = current_allocation + amount_dec
         
         self.position_allocations[symbol] = new_allocation
-        self.allocated_funds += Decimal(str(amount))
+        self.allocated_funds += amount_dec
         
         logger.info(f"Allocated ${amount:.2f} to {symbol}. Total allocated: ${float(self.allocated_funds):.2f}")
         return True
@@ -91,20 +92,21 @@ class PortfolioManager:
             return False
         
         current_allocation = self.position_allocations[symbol]
+        amount_dec = Decimal(str(amount))
         
-        if amount > current_allocation:
-            logger.warning(f"Cannot deallocate ${amount:.2f} from {symbol} - only ${current_allocation:.2f} allocated")
-            amount = current_allocation
+        if amount_dec > current_allocation:
+            logger.warning(f"Cannot deallocate ${amount:.2f} from {symbol} - only ${float(current_allocation):.2f} allocated")
+            amount_dec = current_allocation
         
         # Update allocations
-        new_allocation = current_allocation - amount
+        new_allocation = current_allocation - amount_dec
         if new_allocation <= 0:
             del self.position_allocations[symbol]
         else:
             self.position_allocations[symbol] = new_allocation
         
         # Update funds
-        self.allocated_funds -= Decimal(str(amount))
+        self.allocated_funds -= amount_dec
         self.realized_pnl += Decimal(str(pnl))
         
         logger.info(f"Deallocated ${amount:.2f} from {symbol} with P&L: ${pnl:.2f}. Realized P&L: ${float(self.realized_pnl):.2f}")
@@ -129,6 +131,40 @@ class PortfolioManager:
         
         self.unrealized_pnl = total_unrealized
         logger.debug(f"Updated unrealized P&L: ${float(self.unrealized_pnl):.2f}")
+
+    def reconcile_state(self, active_positions: Dict) -> None:
+        """
+        Reconcile internal state with actual active positions to prevent drift
+        
+        Args:
+            active_positions: Dictionary of currently active positions from the bot
+        """
+        try:
+            old_allocated = float(self.allocated_funds)
+            
+            # Reset state
+            self.allocated_funds = Decimal('0')
+            self.position_allocations = {}
+            
+            # Rebuild from active positions
+            for position_key, position_data in active_positions.items():
+                symbol = position_data.get('symbol', position_key.split('_')[0])
+                allocated = Decimal(str(position_data.get('allocated_amount', 0)))
+                
+                # Update total allocated
+                self.allocated_funds += allocated
+                
+                # Update per-symbol allocation
+                current_symbol_alloc = self.position_allocations.get(symbol, Decimal('0'))
+                self.position_allocations[symbol] = current_symbol_alloc + allocated
+            
+            new_allocated = float(self.allocated_funds)
+            
+            if abs(new_allocated - old_allocated) > 0.01:
+                logger.warning(f"Portfolio state reconciled. Allocated funds corrected from ${old_allocated:.2f} to ${new_allocated:.2f}")
+                
+        except Exception as e:
+            logger.error(f"Error reconciling portfolio state: {e}")
     
     def get_position_allocation(self, symbol: str) -> float:
         """Get current allocation for a specific symbol"""

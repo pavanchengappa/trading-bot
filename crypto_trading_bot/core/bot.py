@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
-from collections import defaultdict
+from collections import defaultdict, deque
 
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
@@ -83,6 +83,9 @@ class TradingBot:
         # Initialize components
         self._initialize_binance_client()
         self._initialize_strategies()
+        
+        # Track recent opportunities for GUI
+        self.recent_opportunities = deque(maxlen=50)
         
     def _initialize_binance_client(self):
         """Initialize Binance API client"""
@@ -308,6 +311,18 @@ class TradingBot:
                                 if self._should_execute_opportunity(opportunity, quick_scan=True):
                                     self._execute_opportunity(opportunity)
                                     self.last_trade_time[symbol] = time.time()
+                                
+                                # Add to recent opportunities for GUI
+                                cached_data = self.market_data_cache.get(symbol, {})
+                                self.recent_opportunities.append({
+                                    'symbol': symbol,
+                                    'price': current_price,
+                                    'volume_24h': cached_data.get('volume_24h', 0),
+                                    'volatility': cached_data.get('volatility', 0),
+                                    'score': opportunity.score,
+                                    'signal': signal.action,
+                                    'timestamp': datetime.now().isoformat()
+                                })
                     
                 except Exception as e:
                     logger.error(f"Error in quick scan for {symbol}: {e}")
@@ -411,15 +426,25 @@ class TradingBot:
                             symbol_performance=self.symbol_performance[symbol],
                             strategy_index=i
                         )
-                        
                         opportunity = MarketOpportunity(
                             symbol=symbol,
                             signal=signal,
-                            score=score,
+                            score=score, # Use the calculated score
                             volume_24h=volume_24h,
                             volatility=volatility
                         )
                         opportunities.append(opportunity)
+                        
+                        # Add to recent opportunities for GUI
+                        self.recent_opportunities.append({
+                            'symbol': symbol,
+                            'price': current_price,
+                            'volume_24h': volume_24h,
+                            'volatility': volatility,
+                            'score': opportunity.score,
+                            'signal': signal.action,
+                            'timestamp': datetime.now().isoformat()
+                        })
                         
                 except Exception as e:
                     logger.error(f"Error with strategy {i} for {symbol}: {e}")
@@ -656,6 +681,33 @@ class TradingBot:
                 # Update performance
                 self._update_symbol_performance(symbol, pnl > 0, pnl)
                 
+                # Record trade in database
+                trade_data = {
+                    'order_id': order['orderId'],
+                    'symbol': symbol,
+                    'side': close_action,
+                    'quantity': quantity,
+                    'price': current_price,
+                    'timestamp': datetime.now(),
+                    'strategy': 'position_management',
+                    'status': order['status'],
+                    'pnl': pnl,
+                    'fees': 0.0, # Placeholder
+                    'position_key': position_key
+                }
+                self.db_manager.record_trade(trade_data)
+                self.total_trades += 1
+                
+                # Send notification
+                portfolio_summary = self.portfolio_manager.get_portfolio_summary()
+                self.notifier.send_notification(
+                    f"Position Closed - {symbol}",
+                    f"{symbol}: {close_action} {quantity:.6f} @ {current_price:.2f}\n"
+                    f"Reason: {reason}\n"
+                    f"P&L: ${pnl:.2f} ({(pnl/position['allocated_amount'])*100:+.2f}%)\n"
+                    f"Portfolio: ${portfolio_summary['current_portfolio_value']:,.2f}"
+                )
+                
                 logger.info(f"Position closed: {symbol} - {reason} - P&L: ${pnl:.2f}")
                 
         except Exception as e:
@@ -671,6 +723,24 @@ class TradingBot:
                     logger.error("Binance client is not initialized")
                     return
                 
+                # Handle SELL signals (Close Position Logic)
+                if signal.action == 'SELL':
+                    # Find active positions for this symbol
+                    positions_to_close = []
+                    for key, pos in self.positions.items():
+                        if pos.get('symbol') == signal.symbol or key.startswith(f"{signal.symbol}_"):
+                            positions_to_close.append((key, pos))
+                    
+                    if not positions_to_close:
+                        logger.debug(f"Ignored SELL signal for {signal.symbol} - No active positions")
+                        return
+
+                    # Close all positions for this symbol
+                    for key, pos in positions_to_close:
+                        self._close_position(key, pos, "Strategy Signal")
+                    return
+
+                # Handle BUY signals (Open Position Logic)
                 # Get symbol info for precision
                 symbol_info = self.client.get_symbol_info(signal.symbol)
                 if not symbol_info or 'filters' not in symbol_info:
@@ -729,9 +799,8 @@ class TradingBot:
                 
                 # Allocate funds
                 allocation_amount = quantity * signal.price
-                if signal.action == 'BUY':
-                    if not self.portfolio_manager.allocate_funds(signal.symbol, allocation_amount):
-                        return
+                if not self.portfolio_manager.allocate_funds(signal.symbol, allocation_amount):
+                    return
                 
                 # Place order
                 order = self._place_order(signal, quantity)
@@ -910,6 +979,9 @@ class TradingBot:
                         'unrealized_pnl': 0
                     }
             
+            # Reconcile portfolio state to ensure sync
+            self.portfolio_manager.reconcile_state(self.positions)
+            
             # Update portfolio manager with current values
             self.portfolio_manager.update_unrealized_pnl(current_positions)
             
@@ -1051,7 +1123,9 @@ class TradingBot:
                     'max_positions_per_symbol': trading_config.get('max_positions_per_symbol', 3),
                     'quick_profit_threshold': trading_config.get('quick_profit_threshold', 0.02),
                     'max_hold_time': trading_config.get('max_position_hold_seconds', 600)
-                }
+                },
+                'market_scanner': list(self.recent_opportunities),
+                'recent_trades': self.db_manager.get_recent_trades(limit=20)
             }
             
             return status

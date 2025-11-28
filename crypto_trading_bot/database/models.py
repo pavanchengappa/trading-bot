@@ -192,6 +192,10 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error getting trades: {e}")
             return []
+
+    def get_recent_trades(self, limit: int = 20) -> List[Dict]:
+        """Get most recent trades across all symbols"""
+        return self.get_trades(limit=limit)
     
     def get_orders(self, symbol: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
         """Get order history"""
@@ -392,4 +396,4 @@ class DatabaseManager:
                 
         except Exception as e:
             logger.error(f"Error getting database stats: {e}")
-            return {} 
+            return {}
