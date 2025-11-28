@@ -412,11 +412,39 @@ class TradingBot:
                 'last_update': datetime.now()
             }
             
+            # --- PHASE 2: Multi-Timeframe Analysis ---
+            # Fetch 1h klines for trend detection
+            htf_trend = 'NEUTRAL'
+            try:
+                klines_1h = self.client.get_klines(
+                    symbol=symbol,
+                    interval=Client.KLINE_INTERVAL_1HOUR,
+                    limit=50
+                )
+                if klines_1h and len(klines_1h) >= 20:
+                    closes_1h = [float(k[4]) for k in klines_1h]
+                    # Simple EMA trend on 1h
+                    ema_20 = self._calculate_ema(closes_1h, 20)
+                    ema_50 = self._calculate_ema(closes_1h, 50)
+                    
+                    if ema_20 and ema_50:
+                        if ema_20 > ema_50:
+                            htf_trend = 'BULLISH'
+                        elif ema_20 < ema_50:
+                            htf_trend = 'BEARISH'
+            except Exception as e:
+                logger.warning(f"Failed to fetch HTF data for {symbol}: {e}")
+            
+            context = {
+                'htf_trend': htf_trend
+            }
+            
             # Test all strategies for this symbol
             strategies = self.get_strategies_for_symbol(symbol)
             for i, strategy in enumerate(strategies):
                 try:
-                    signal = strategy.generate_signal(symbol, current_price, klines)
+                    # Pass context to generate_signal
+                    signal = strategy.generate_signal(symbol, current_price, klines, context=context)
                     if signal:
                         # Adjust score based on strategy index (prefer diverse signals)
                         score = self._calculate_opportunity_score(
@@ -524,10 +552,36 @@ class TradingBot:
         
         # Check risk limits (relaxed)
         try:
-            if not self.risk_manager.check_risk_limits(opportunity.signal, opportunity.volatility):
+            # Gather correlation data if needed
+            correlation_data = {}
+            if self.risk_manager.max_correlation < 1.0:
+                # Get price history for candidate symbol
+                klines = self.client.get_klines(
+                    symbol=opportunity.symbol,
+                    interval=Client.KLINE_INTERVAL_1MINUTE,
+                    limit=50
+                )
+                correlation_data[opportunity.symbol] = [float(k[4]) for k in klines]
+                
+                # Get price history for active positions
+                active_symbols = set()
+                for pos in self.positions.values():
+                    active_symbols.add(pos.get('symbol'))
+                
+                for sym in active_symbols:
+                    if sym != opportunity.symbol:
+                        klines = self.client.get_klines(
+                            symbol=sym,
+                            interval=Client.KLINE_INTERVAL_1MINUTE,
+                            limit=50
+                        )
+                        correlation_data[sym] = [float(k[4]) for k in klines]
+
+            if not self.risk_manager.check_risk_limits(opportunity.signal, opportunity.volatility, correlation_data):
                 logger.debug(f"Risk limit check failed for {opportunity.symbol}")
                 return False
-        except:
+        except Exception as e:
+            logger.error(f"Error in risk check: {e}")
             pass  # Continue if risk check fails
         
         # Check portfolio allocation limits
@@ -713,6 +767,21 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Error closing position {position_key}: {e}")
     
+    def _calculate_ema(self, prices: List[float], window: int) -> Optional[float]:
+        """Helper to calculate EMA for Bot internal use"""
+        if len(prices) < window:
+            return None
+        
+        import numpy as np
+        prices_array = np.array(prices)
+        alpha = 2 / (window + 1)
+        ema = [prices_array[0]]
+        
+        for price in prices_array[1:]:
+            ema.append(alpha * price + (1 - alpha) * ema[-1])
+        
+        return float(ema[-1])
+
     def _execute_opportunity(self, opportunity: MarketOpportunity):
         """Enhanced execution with position tracking"""
         with self._lock:
@@ -748,7 +817,12 @@ class TradingBot:
                     return
                 
                 # Calculate investment amount
-                max_trade_amount = self.portfolio_manager.get_max_trade_amount()
+                # Use Kelly Criterion if enabled
+                win_rate = self.symbol_performance[signal.symbol].get('win_rate', 0.5)
+                # Estimate win/loss ratio from recent trades or default to 1.5
+                win_loss_ratio = 1.5 
+                
+                max_trade_amount = self.portfolio_manager.get_max_trade_amount_kelly(win_rate, win_loss_ratio)
                 score_multiplier = 0.3 + (opportunity.score / 100) * 0.7  # 30% to 100% of max
                 investment_amount = max_trade_amount * score_multiplier
                 

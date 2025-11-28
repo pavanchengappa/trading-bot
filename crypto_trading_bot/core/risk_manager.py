@@ -38,8 +38,10 @@ class RiskManager:
         self.stop_loss_pct = trading_config.get('stop_loss_percentage', 0.05)
         self.take_profit_pct = trading_config.get('take_profit_percentage', 0.10)
         self.max_volatility = trading_config.get('max_volatility', 10.0)  # Max 10% volatility
+        self.atr_multiplier = trading_config.get('atr_stop_multiplier', 2.0)  # Chandelier Exit multiplier
+        self.max_correlation = trading_config.get('max_portfolio_correlation', 0.8)  # Max correlation threshold
     
-    def check_risk_limits(self, signal: TradeSignal, volatility: float = 0.0) -> bool:
+    def check_risk_limits(self, signal: TradeSignal, volatility: float = 0.0, correlation_data: Dict = None) -> bool:
         """Check if trade signal meets risk management criteria"""
         try:
             # Reset daily stats if needed
@@ -65,6 +67,10 @@ class RiskManager:
             
             # Check market volatility
             if not self._check_volatility_limits(signal, volatility):
+                return False
+            
+            # Check portfolio correlation
+            if correlation_data and not self._check_correlation_limits(signal, correlation_data):
                 return False
             
             return True
@@ -113,6 +119,47 @@ class RiskManager:
             return False
         return True
     
+    def _check_correlation_limits(self, signal: TradeSignal, correlation_data: Dict) -> bool:
+        """Check if new position is too correlated with existing portfolio"""
+        try:
+            if not correlation_data or len(self.positions) == 0:
+                return True
+                
+            symbol = signal.symbol
+            new_prices = correlation_data.get(symbol, [])
+            
+            if not new_prices or len(new_prices) < 10:
+                return True
+                
+            import numpy as np
+            
+            # Check correlation against each active position
+            for pos_symbol, pos_prices in correlation_data.items():
+                if pos_symbol == symbol:
+                    continue
+                    
+                if pos_symbol in self.positions:
+                    if not pos_prices or len(pos_prices) < 10:
+                        continue
+                        
+                    # Ensure same length
+                    min_len = min(len(new_prices), len(pos_prices))
+                    s1 = new_prices[-min_len:]
+                    s2 = pos_prices[-min_len:]
+                    
+                    # Calculate correlation
+                    correlation = np.corrcoef(s1, s2)[0, 1]
+                    
+                    if correlation > self.max_correlation:
+                        logger.warning(f"High correlation detected between {symbol} and {pos_symbol}: {correlation:.2f}")
+                        return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking correlation: {e}")
+            return True  # Fail open to avoid blocking trades on error
+    
     def record_trade(self, trade_data: Dict):
         """Record a completed trade for risk tracking"""
         try:
@@ -144,7 +191,14 @@ class RiskManager:
             
             # Record new position
             if side == 'BUY':
-                stop_loss = price * (1 - self.stop_loss_pct / 100)
+                # Use ATR-based stop loss if available (Chandelier Exit)
+                if hasattr(trade_data.get('signal'), 'atr') and trade_data['signal'].atr:
+                    atr = trade_data['signal'].atr
+                    stop_loss = price - (atr * self.atr_multiplier)
+                    logger.info(f"Using ATR-based stop loss: {stop_loss:.2f} (ATR: {atr:.4f})")
+                else:
+                    stop_loss = price * (1 - self.stop_loss_pct / 100)
+                
                 take_profit = price * (1 + self.take_profit_pct / 100)
                 
                 self.positions[symbol] = Position(

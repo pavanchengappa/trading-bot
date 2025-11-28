@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 
 @dataclass
 class TradeSignal:
@@ -10,4 +11,7 @@ class TradeSignal:
     quantity: float
     timestamp: datetime
     strategy: str
-    confidence: float 
+    confidence: float
+    atr: Optional[float] = None
+    regime: str = "UNKNOWN"
+    mta_confirmed: bool = False

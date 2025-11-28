@@ -20,9 +20,161 @@ class BaseStrategy(ABC):
         self.last_signal_time = 0
     
     @abstractmethod
-    def generate_signal(self, symbol: str, current_price: float, klines: List) -> Optional[TradeSignal]:
-        """Generate trading signal based on strategy logic"""
+    def generate_signal(self, symbol: str, current_price: float, klines: List, context: Dict = None) -> Optional[TradeSignal]:
+        """
+        Generate trading signal based on strategy logic
+        
+        Args:
+            symbol: Trading symbol
+            current_price: Current market price
+            klines: Candlestick data
+            context: Additional context (HTF trend, etc.)
+        """
         pass
+    
+    def _calculate_atr(self, klines: List, period: int = 14) -> Optional[float]:
+        """Calculate Average True Range"""
+        if len(klines) < period + 1:
+            return None
+            
+        highs = [float(k[2]) for k in klines]
+        lows = [float(k[3]) for k in klines]
+        closes = [float(k[4]) for k in klines]
+        
+        tr_values = []
+        for i in range(1, len(klines)):
+            hl = highs[i] - lows[i]
+            hc = abs(highs[i] - closes[i-1])
+            lc = abs(lows[i] - closes[i-1])
+            tr_values.append(max(hl, hc, lc))
+            
+        if len(tr_values) < period:
+            return None
+            
+        # Simple Moving Average of TR for initial ATR
+        # Then (Prior ATR * (period - 1) + Current TR) / period
+        atr = sum(tr_values[-period:]) / period
+        atr = sum(tr_values[-period:]) / period
+        return atr
+    
+    def _calculate_adx(self, klines: List, period: int = 14) -> Optional[float]:
+        """Calculate Average Directional Index"""
+        if len(klines) < period * 2:
+            return None
+            
+        highs = [float(k[2]) for k in klines]
+        lows = [float(k[3]) for k in klines]
+        closes = [float(k[4]) for k in klines]
+        
+        # Calculate TR, +DM, -DM
+        tr_list = []
+        plus_dm_list = []
+        minus_dm_list = []
+        
+        for i in range(1, len(klines)):
+            h = highs[i]
+            l = lows[i]
+            prev_c = closes[i-1]
+            prev_h = highs[i-1]
+            prev_l = lows[i-1]
+            
+            tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+            tr_list.append(tr)
+            
+            up_move = h - prev_h
+            down_move = prev_l - l
+            
+            if up_move > down_move and up_move > 0:
+                plus_dm_list.append(up_move)
+            else:
+                plus_dm_list.append(0)
+                
+            if down_move > up_move and down_move > 0:
+                minus_dm_list.append(down_move)
+            else:
+                minus_dm_list.append(0)
+        
+        # Smooth TR, +DM, -DM
+        # First value is simple sum
+        tr_smooth = [sum(tr_list[:period])]
+        plus_dm_smooth = [sum(plus_dm_list[:period])]
+        minus_dm_smooth = [sum(minus_dm_list[:period])]
+        
+        for i in range(period, len(tr_list)):
+            tr_smooth.append(tr_smooth[-1] - (tr_smooth[-1]/period) + tr_list[i])
+            plus_dm_smooth.append(plus_dm_smooth[-1] - (plus_dm_smooth[-1]/period) + plus_dm_list[i])
+            minus_dm_smooth.append(minus_dm_smooth[-1] - (minus_dm_smooth[-1]/period) + minus_dm_list[i])
+            
+        # Calculate DI and DX
+        dx_list = []
+        for i in range(len(tr_smooth)):
+            if tr_smooth[i] == 0:
+                dx_list.append(0)
+                continue
+                
+            plus_di = 100 * (plus_dm_smooth[i] / tr_smooth[i])
+            minus_di = 100 * (minus_dm_smooth[i] / tr_smooth[i])
+            
+            if plus_di + minus_di == 0:
+                dx_list.append(0)
+            else:
+                dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+                dx_list.append(dx)
+        
+        # Calculate ADX (SMA of DX)
+        if len(dx_list) < period:
+            return None
+            
+        adx = sum(dx_list[-period:]) / period
+        return adx
+
+    def _calculate_volume_profile(self, klines: List, price_step: float = None) -> Dict:
+        """Calculate Volume Profile (High Volume Nodes)"""
+        if not klines:
+            return {}
+            
+        closes = [float(k[4]) for k in klines]
+        volumes = [float(k[5]) for k in klines]
+        
+        min_price = min(closes)
+        max_price = max(closes)
+        
+        if price_step is None:
+            price_step = (max_price - min_price) / 50  # 50 levels
+            if price_step == 0:
+                return {}
+        
+        profile = {}
+        
+        for i in range(len(closes)):
+            price = closes[i]
+            volume = volumes[i]
+            
+            # Find price bucket
+            bucket = round(price / price_step) * price_step
+            profile[bucket] = profile.get(bucket, 0) + volume
+            
+        # Identify High Volume Nodes (top 20% of buckets)
+        sorted_nodes = sorted(profile.items(), key=lambda x: x[1], reverse=True)
+        hvn_threshold = len(sorted_nodes) // 5
+        hvns = [node[0] for node in sorted_nodes[:hvn_threshold]]
+        
+        return {
+            'profile': profile,
+            'hvns': hvns,
+            'poc': sorted_nodes[0][0] if sorted_nodes else 0  # Point of Control
+        }
+
+    def detect_market_regime(self, klines: List) -> str:
+        """Detect if market is TRENDING or RANGING using ADX"""
+        adx = self._calculate_adx(klines)
+        if adx is None:
+            return 'UNKNOWN'
+            
+        if adx > 25:
+            return 'TRENDING'
+        else:
+            return 'RANGING'
     
     def _calculate_sma(self, prices: List[float], window: int) -> Optional[float]:
         """Calculate Simple Moving Average"""
@@ -158,8 +310,8 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
         self.trend_strength_threshold = parameters.get('trend_strength_threshold', 0.001)
         self.signal_cooldown = parameters.get('signal_cooldown_seconds', 30)  # Reduced cooldown
     
-    def generate_signal(self, symbol: str, current_price: float, klines: List) -> Optional[TradeSignal]:
-        """Enhanced signal generation with multiple criteria"""
+    def generate_signal(self, symbol: str, current_price: float, klines: List, context: Dict = None) -> Optional[TradeSignal]:
+        """Enhanced signal generation with multiple criteria, Regime Detection, and MTA"""
         try:
             current_time = datetime.now().timestamp()
             
@@ -210,8 +362,41 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
             signal = None
             confidence_base = min(abs(current_diff) / long_ma * 100, 1.0)  # Base confidence
             
+            # --- PHASE 2: Regime Detection ---
+            regime = self.detect_market_regime(klines)
+            if regime == 'RANGING':
+                # Reduce confidence for trend strategy in ranging market
+                confidence_base *= 0.5
+                logger.debug(f"Reduced confidence for {symbol} due to RANGING regime")
+            elif regime == 'TRENDING':
+                confidence_base *= 1.2
+            
+            # --- PHASE 2: Multi-Timeframe Analysis ---
+            mta_confirmed = False
+            htf_trend = context.get('htf_trend', 'NEUTRAL') if context else 'NEUTRAL'
+            
+            # --- PHASE 2: Volume Profile ---
+            vp_data = self._calculate_volume_profile(klines)
+            hvns = vp_data.get('hvns', [])
+            
             # Enhanced bullish crossover detection
             if prev_diff <= 0 and current_diff > 0:
+                # Check MTA
+                if htf_trend == 'BEARISH':
+                    confidence_base *= 0.5 # Trade against HTF trend
+                    logger.debug(f"Reduced confidence for {symbol} BUY due to BEARISH HTF trend")
+                elif htf_trend == 'BULLISH':
+                    confidence_base *= 1.3
+                    mta_confirmed = True
+                
+                # Check Volume Profile (Resistance)
+                # If price is just below an HVN, it might be resistance
+                for hvn in hvns:
+                    if current_price < hvn < current_price * 1.02: # HVN within 2% above
+                        confidence_base *= 0.8
+                        logger.debug(f"Reduced confidence for {symbol} BUY due to overhead resistance HVN")
+                        break
+
                 if abs(current_diff) / long_ma >= self.min_crossover_strength:
                     confidence = confidence_base * volume_boost
                     
@@ -227,6 +412,9 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
                     if ema_diff > 0:
                         confidence *= 1.1
                     
+                    # Calculate ATR for dynamic stops
+                    atr = self._calculate_atr(klines)
+
                     signal = TradeSignal(
                         symbol=symbol,
                         action='BUY',
@@ -234,7 +422,8 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
                         quantity=0,
                         timestamp=datetime.now(),
                         strategy='enhanced_ma_crossover',
-                        confidence=min(confidence, 1.0)
+                        confidence=min(confidence, 1.0),
+                        atr=atr
                     )
                     
                     self.last_signal_time = current_time
@@ -243,6 +432,22 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
             
             # Enhanced bearish crossover detection  
             elif prev_diff >= 0 and current_diff < 0:
+                # Check MTA
+                if htf_trend == 'BULLISH':
+                    confidence_base *= 0.5 # Trade against HTF trend
+                    logger.debug(f"Reduced confidence for {symbol} SELL due to BULLISH HTF trend")
+                elif htf_trend == 'BEARISH':
+                    confidence_base *= 1.3
+                    mta_confirmed = True
+                    
+                # Check Volume Profile (Support)
+                # If price is just above an HVN, it might be support
+                for hvn in hvns:
+                    if current_price > hvn > current_price * 0.98: # HVN within 2% below
+                        confidence_base *= 0.8
+                        logger.debug(f"Reduced confidence for {symbol} SELL due to underlying support HVN")
+                        break
+
                 if abs(current_diff) / long_ma >= self.min_crossover_strength:
                     confidence = confidence_base * volume_boost
                     
@@ -258,6 +463,9 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
                     if ema_diff < 0:
                         confidence *= 1.1
                     
+                    # Calculate ATR for dynamic stops
+                    atr = self._calculate_atr(klines)
+
                     signal = TradeSignal(
                         symbol=symbol,
                         action='SELL',
@@ -265,7 +473,8 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
                         quantity=0,
                         timestamp=datetime.now(),
                         strategy='enhanced_ma_crossover',
-                        confidence=min(confidence, 1.0)
+                        confidence=min(confidence, 1.0),
+                        atr=atr
                     )
                     
                     self.last_signal_time = current_time
@@ -280,6 +489,9 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
                 if abs(trend_strength) > self.trend_strength_threshold:
                     if trend_strength > 0 and current_diff > 0 and patterns.get('high_volatility'):
                         # Strong uptrend continuation
+                        # Calculate ATR for dynamic stops
+                        atr = self._calculate_atr(klines)
+                        
                         signal = TradeSignal(
                             symbol=symbol,
                             action='BUY',
@@ -287,13 +499,17 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
                             quantity=0,
                             timestamp=datetime.now(),
                             strategy='enhanced_ma_trend_follow',
-                            confidence=min(abs(trend_strength) * 20, 0.8)  # Max 0.8 confidence for trend following
+                            confidence=min(abs(trend_strength) * 20, 0.8),  # Max 0.8 confidence for trend following
+                            atr=atr
                         )
                         self.last_signal_time = current_time
                         logger.info(f"Trend Follow BUY: {symbol} - Strength: {trend_strength:.4f}")
                         
                     elif trend_strength < 0 and current_diff < 0 and patterns.get('high_volatility'):
                         # Strong downtrend continuation
+                        # Calculate ATR for dynamic stops
+                        atr = self._calculate_atr(klines)
+                        
                         signal = TradeSignal(
                             symbol=symbol,
                             action='SELL',
@@ -301,7 +517,8 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
                             quantity=0,
                             timestamp=datetime.now(),
                             strategy='enhanced_ma_trend_follow',
-                            confidence=min(abs(trend_strength) * 20, 0.8)
+                            confidence=min(abs(trend_strength) * 20, 0.8),
+                            atr=atr
                         )
                         self.last_signal_time = current_time
                         logger.info(f"Trend Follow SELL: {symbol} - Strength: {trend_strength:.4f}")
@@ -326,8 +543,8 @@ class RSIStrategy(BaseStrategy):
         self.moderate_overbought = parameters.get('moderate_overbought', 65)
         self.moderate_oversold = parameters.get('moderate_oversold', 35)
     
-    def generate_signal(self, symbol: str, current_price: float, klines: List) -> Optional[TradeSignal]:
-        """Enhanced RSI signal generation with dynamic thresholds"""
+    def generate_signal(self, symbol: str, current_price: float, klines: List, context: Dict = None) -> Optional[TradeSignal]:
+        """Enhanced RSI signal generation with dynamic thresholds, Regime, and MTA"""
         try:
             current_time = datetime.now().timestamp()
             
@@ -356,6 +573,20 @@ class RSIStrategy(BaseStrategy):
             overbought_threshold = self.base_overbought
             oversold_threshold = self.base_oversold
             
+            # --- PHASE 2: Regime Detection ---
+            regime = self.detect_market_regime(klines)
+            
+            # RSI (Mean Reversion) works BETTER in Ranging markets
+            confidence_multiplier = 1.0
+            if regime == 'RANGING':
+                confidence_multiplier = 1.2
+            elif regime == 'TRENDING':
+                confidence_multiplier = 0.8
+                
+            # --- PHASE 2: Multi-Timeframe Analysis ---
+            mta_confirmed = False
+            htf_trend = context.get('htf_trend', 'NEUTRAL') if context else 'NEUTRAL'
+            
             if self.dynamic_thresholds:
                 if patterns.get('high_volatility'):
                     overbought_threshold -= 5  # Lower threshold in volatile markets
@@ -370,11 +601,22 @@ class RSIStrategy(BaseStrategy):
             # Extreme oversold condition (strong buy signal)
             if current_rsi < oversold_threshold:
                 confidence = (oversold_threshold - current_rsi) / oversold_threshold
+                confidence *= confidence_multiplier
+                
+                # MTA Check
+                if htf_trend == 'BULLISH':
+                    confidence *= 1.2
+                    mta_confirmed = True
+                elif htf_trend == 'BEARISH':
+                    confidence *= 0.6 # Catching falling knife
                 
                 # RSI divergence boost
                 if rsi_trend > 0 and (closing_prices[-1] - closing_prices[-3]) / closing_prices[-3] < 0:
                     confidence *= 1.3  # Positive RSI divergence
                 
+                # Calculate ATR for dynamic stops
+                atr = self._calculate_atr(klines)
+
                 signal = TradeSignal(
                     symbol=symbol,
                     action='BUY',
@@ -382,7 +624,8 @@ class RSIStrategy(BaseStrategy):
                     quantity=0,
                     timestamp=datetime.now(),
                     strategy='enhanced_rsi_extreme',
-                    confidence=min(confidence, 1.0)
+                    confidence=min(confidence, 1.0),
+                    atr=atr
                 )
                 self.last_signal_time = current_time
                 logger.info(f"Enhanced RSI BUY: {symbol} - RSI: {current_rsi:.1f} (Extreme)")
@@ -395,6 +638,18 @@ class RSIStrategy(BaseStrategy):
                 if rsi_trend < 0 and (closing_prices[-1] - closing_prices[-3]) / closing_prices[-3] > 0:
                     confidence *= 1.3  # Negative RSI divergence
                 
+                confidence *= confidence_multiplier
+                
+                # MTA Check
+                if htf_trend == 'BEARISH':
+                    confidence *= 1.2
+                    mta_confirmed = True
+                elif htf_trend == 'BULLISH':
+                    confidence *= 0.6 # Selling in uptrend
+                
+                # Calculate ATR for dynamic stops
+                atr = self._calculate_atr(klines)
+
                 signal = TradeSignal(
                     symbol=symbol,
                     action='SELL',
@@ -402,7 +657,8 @@ class RSIStrategy(BaseStrategy):
                     quantity=0,
                     timestamp=datetime.now(),
                     strategy='enhanced_rsi_extreme',
-                    confidence=min(confidence, 1.0)
+                    confidence=min(confidence, 1.0),
+                    atr=atr
                 )
                 self.last_signal_time = current_time
                 logger.info(f"Enhanced RSI SELL: {symbol} - RSI: {current_rsi:.1f} (Extreme)")
@@ -410,6 +666,9 @@ class RSIStrategy(BaseStrategy):
             # Moderate levels for additional trading opportunities
             elif current_rsi < self.moderate_oversold and patterns.get('high_volatility'):
                 confidence = (self.moderate_oversold - current_rsi) / self.moderate_oversold * 0.7  # Lower confidence
+                # Calculate ATR for dynamic stops
+                atr = self._calculate_atr(klines)
+
                 signal = TradeSignal(
                     symbol=symbol,
                     action='BUY',
@@ -417,13 +676,17 @@ class RSIStrategy(BaseStrategy):
                     quantity=0,
                     timestamp=datetime.now(),
                     strategy='enhanced_rsi_moderate',
-                    confidence=min(confidence, 0.7)
+                    confidence=min(confidence, 0.7),
+                    atr=atr
                 )
                 self.last_signal_time = current_time
                 logger.info(f"Enhanced RSI BUY: {symbol} - RSI: {current_rsi:.1f} (Moderate)")
                 
             elif current_rsi > self.moderate_overbought and patterns.get('high_volatility'):
                 confidence = (current_rsi - self.moderate_overbought) / (100 - self.moderate_overbought) * 0.7
+                # Calculate ATR for dynamic stops
+                atr = self._calculate_atr(klines)
+
                 signal = TradeSignal(
                     symbol=symbol,
                     action='SELL',
@@ -431,7 +694,8 @@ class RSIStrategy(BaseStrategy):
                     quantity=0,
                     timestamp=datetime.now(),
                     strategy='enhanced_rsi_moderate',
-                    confidence=min(confidence, 0.7)
+                    confidence=min(confidence, 0.7),
+                    atr=atr
                 )
                 self.last_signal_time = current_time
                 logger.info(f"Enhanced RSI SELL: {symbol} - RSI: {current_rsi:.1f} (Moderate)")
@@ -453,7 +717,7 @@ class BollingerBandsStrategy(BaseStrategy):
         self.squeeze_threshold = parameters.get('squeeze_threshold', 0.02)  # 2% band width
         self.signal_cooldown = parameters.get('signal_cooldown_seconds', 25)
     
-    def generate_signal(self, symbol: str, current_price: float, klines: List) -> Optional[TradeSignal]:
+    def generate_signal(self, symbol: str, current_price: float, klines: List, context: Dict = None) -> Optional[TradeSignal]:
         """Enhanced Bollinger Bands with squeeze detection"""
         try:
             current_time = datetime.now().timestamp()
@@ -494,6 +758,9 @@ class BollingerBandsStrategy(BaseStrategy):
                     if is_squeeze:
                         confidence *= 1.4
                     
+                    # Calculate ATR for dynamic stops
+                    atr = self._calculate_atr(klines)
+
                     signal = TradeSignal(
                         symbol=symbol,
                         action='SELL',
@@ -501,7 +768,8 @@ class BollingerBandsStrategy(BaseStrategy):
                         quantity=0,
                         timestamp=datetime.now(),
                         strategy='enhanced_bb_breakout',
-                        confidence=min(confidence, 1.0)
+                        confidence=min(confidence, 1.0),
+                        atr=atr
                     )
                     self.last_signal_time = current_time
                     logger.info(f"BB SELL Breakout: {symbol} - Strength: {breakout_strength:.4f}")
@@ -516,6 +784,9 @@ class BollingerBandsStrategy(BaseStrategy):
                     if is_squeeze:
                         confidence *= 1.4
                     
+                    # Calculate ATR for dynamic stops
+                    atr = self._calculate_atr(klines)
+
                     signal = TradeSignal(
                         symbol=symbol,
                         action='BUY',
@@ -523,7 +794,8 @@ class BollingerBandsStrategy(BaseStrategy):
                         quantity=0,
                         timestamp=datetime.now(),
                         strategy='enhanced_bb_breakout',
-                        confidence=min(confidence, 1.0)
+                        confidence=min(confidence, 1.0),
+                        atr=atr
                     )
                     self.last_signal_time = current_time
                     logger.info(f"BB BUY Breakout: {symbol} - Strength: {breakout_strength:.4f}")
@@ -532,6 +804,9 @@ class BollingerBandsStrategy(BaseStrategy):
             elif not signal:
                 # Near upper band but not breaking out (potential reversal)
                 if price_position > 0.8 and patterns.get('high_volatility'):
+                    # Calculate ATR for dynamic stops
+                    atr = self._calculate_atr(klines)
+
                     signal = TradeSignal(
                         symbol=symbol,
                         action='SELL',
@@ -539,13 +814,17 @@ class BollingerBandsStrategy(BaseStrategy):
                         quantity=0,
                         timestamp=datetime.now(),
                         strategy='enhanced_bb_reversal',
-                        confidence=min((price_position - 0.8) * 2.5, 0.6)
+                        confidence=min((price_position - 0.8) * 2.5, 0.6),
+                        atr=atr
                     )
                     self.last_signal_time = current_time
                     logger.info(f"BB SELL Reversal: {symbol} - Position: {price_position:.2f}")
                 
                 # Near lower band but not breaking out (potential reversal)
                 elif price_position < 0.2 and patterns.get('high_volatility'):
+                    # Calculate ATR for dynamic stops
+                    atr = self._calculate_atr(klines)
+
                     signal = TradeSignal(
                         symbol=symbol,
                         action='BUY',
@@ -553,7 +832,8 @@ class BollingerBandsStrategy(BaseStrategy):
                         quantity=0,
                         timestamp=datetime.now(),
                         strategy='enhanced_bb_reversal',
-                        confidence=min((0.2 - price_position) * 2.5, 0.6)
+                        confidence=min((0.2 - price_position) * 2.5, 0.6),
+                        atr=atr
                     )
                     self.last_signal_time = current_time
                     logger.info(f"BB BUY Reversal: {symbol} - Position: {price_position:.2f}")
@@ -575,7 +855,7 @@ class MACDStrategy(BaseStrategy):
         self.min_histogram_strength = parameters.get('min_histogram_strength', 0.0001)
         self.signal_cooldown = parameters.get('signal_cooldown_seconds', 30)
     
-    def generate_signal(self, symbol: str, current_price: float, klines: List) -> Optional[TradeSignal]:
+    def generate_signal(self, symbol: str, current_price: float, klines: List, context: Dict = None) -> Optional[TradeSignal]:
         """Generate MACD signals"""
         try:
             current_time = datetime.now().timestamp()
@@ -606,6 +886,9 @@ class MACDStrategy(BaseStrategy):
             if prev_histogram <= 0 and current_histogram > 0:
                 if abs(current_histogram) >= self.min_histogram_strength:
                     confidence = min(abs(current_histogram) * 1000, 0.8)
+                    # Calculate ATR for dynamic stops
+                    atr = self._calculate_atr(klines)
+
                     signal = TradeSignal(
                         symbol=symbol,
                         action='BUY',
@@ -613,7 +896,8 @@ class MACDStrategy(BaseStrategy):
                         quantity=0,
                         timestamp=datetime.now(),
                         strategy='macd_crossover',
-                        confidence=confidence
+                        confidence=confidence,
+                        atr=atr
                     )
                     self.last_signal_time = current_time
                     logger.info(f"MACD BUY: {symbol} - Histogram: {current_histogram:.6f}")
@@ -622,6 +906,9 @@ class MACDStrategy(BaseStrategy):
             elif prev_histogram >= 0 and current_histogram < 0:
                 if abs(current_histogram) >= self.min_histogram_strength:
                     confidence = min(abs(current_histogram) * 1000, 0.8)
+                    # Calculate ATR for dynamic stops
+                    atr = self._calculate_atr(klines)
+
                     signal = TradeSignal(
                         symbol=symbol,
                         action='SELL',
@@ -629,7 +916,8 @@ class MACDStrategy(BaseStrategy):
                         quantity=0,
                         timestamp=datetime.now(),
                         strategy='macd_crossover',
-                        confidence=confidence
+                        confidence=confidence,
+                        atr=atr
                     )
                     self.last_signal_time = current_time
                     logger.info(f"MACD SELL: {symbol} - Histogram: {current_histogram:.6f}")
@@ -649,7 +937,7 @@ class MomentumStrategy(BaseStrategy):
         self.min_momentum_threshold = parameters.get('min_momentum_threshold', 0.005)  # 0.5%
         self.signal_cooldown = parameters.get('signal_cooldown_seconds', 15)  # Very short cooldown
     
-    def generate_signal(self, symbol: str, current_price: float, klines: List) -> Optional[TradeSignal]:
+    def generate_signal(self, symbol: str, current_price: float, klines: List, context: Dict = None) -> Optional[TradeSignal]:
         """Generate momentum-based signals"""
         try:
             current_time = datetime.now().timestamp()
@@ -673,6 +961,9 @@ class MomentumStrategy(BaseStrategy):
             # Strong positive momentum
             if current_momentum > self.min_momentum_threshold and patterns.get('high_volatility'):
                 confidence = min(current_momentum * 20, 0.7)  # Max 0.7 for momentum signals
+                # Calculate ATR for dynamic stops
+                atr = self._calculate_atr(klines)
+
                 signal = TradeSignal(
                     symbol=symbol,
                     action='BUY',
@@ -680,7 +971,8 @@ class MomentumStrategy(BaseStrategy):
                     quantity=0,
                     timestamp=datetime.now(),
                     strategy='momentum',
-                    confidence=confidence
+                    confidence=confidence,
+                    atr=atr
                 )
                 self.last_signal_time = current_time
                 logger.info(f"Momentum BUY: {symbol} - Momentum: {current_momentum:.4f}")
@@ -688,6 +980,9 @@ class MomentumStrategy(BaseStrategy):
             # Strong negative momentum
             elif current_momentum < -self.min_momentum_threshold and patterns.get('high_volatility'):
                 confidence = min(abs(current_momentum) * 20, 0.7)
+                # Calculate ATR for dynamic stops
+                atr = self._calculate_atr(klines)
+
                 signal = TradeSignal(
                     symbol=symbol,
                     action='SELL',
@@ -695,7 +990,8 @@ class MomentumStrategy(BaseStrategy):
                     quantity=0,
                     timestamp=datetime.now(),
                     strategy='momentum',
-                    confidence=confidence
+                    confidence=confidence,
+                    atr=atr
                 )
                 self.last_signal_time = current_time
                 logger.info(f"Momentum SELL: {symbol} - Momentum: {current_momentum:.4f}")
@@ -715,7 +1011,7 @@ class VolatilityBreakoutStrategy(BaseStrategy):
         self.volatility_multiplier = parameters.get('volatility_multiplier', 1.5)
         self.signal_cooldown = parameters.get('signal_cooldown_seconds', 20)
     
-    def generate_signal(self, symbol: str, current_price: float, klines: List) -> Optional[TradeSignal]:
+    def generate_signal(self, symbol: str, current_price: float, klines: List, context: Dict = None) -> Optional[TradeSignal]:
         """Generate volatility breakout signals"""
         try:
             current_time = datetime.now().timestamp()
@@ -752,6 +1048,9 @@ class VolatilityBreakoutStrategy(BaseStrategy):
                 confidence = min(volatility_ratio / self.volatility_multiplier * 0.6, 0.8)
                 
                 if recent_change > 0:
+                    # Calculate ATR for dynamic stops
+                    atr = self._calculate_atr(klines)
+
                     signal = TradeSignal(
                         symbol=symbol,
                         action='BUY',
@@ -759,10 +1058,14 @@ class VolatilityBreakoutStrategy(BaseStrategy):
                         quantity=0,
                         timestamp=datetime.now(),
                         strategy='volatility_breakout',
-                        confidence=confidence
+                        confidence=confidence,
+                        atr=atr
                     )
                     logger.info(f"Volatility BUY: {symbol} - Ratio: {volatility_ratio:.2f}")
                 else:
+                    # Calculate ATR for dynamic stops
+                    atr = self._calculate_atr(klines)
+
                     signal = TradeSignal(
                         symbol=symbol,
                         action='SELL',
@@ -770,7 +1073,8 @@ class VolatilityBreakoutStrategy(BaseStrategy):
                         quantity=0,
                         timestamp=datetime.now(),
                         strategy='volatility_breakout',
-                        confidence=confidence
+                        confidence=confidence,
+                        atr=atr
                     )
                     logger.info(f"Volatility SELL: {symbol} - Ratio: {volatility_ratio:.2f}")
                 
@@ -792,7 +1096,7 @@ class RandomStrategy(BaseStrategy):
         self.signal_cooldown = parameters.get('signal_cooldown_seconds', 45)
         self.favor_trend = parameters.get('favor_trend', True)
     
-    def generate_signal(self, symbol: str, current_price: float, klines: List) -> Optional[TradeSignal]:
+    def generate_signal(self, symbol: str, current_price: float, klines: List, context: Dict = None) -> Optional[TradeSignal]:
         """Generate controlled random signals"""
         try:
             current_time = datetime.now().timestamp()

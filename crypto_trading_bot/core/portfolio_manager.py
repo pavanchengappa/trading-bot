@@ -19,6 +19,8 @@ class PortfolioManager:
         """
         self.total_investment = Decimal(str(total_investment))
         self.max_allocation_per_trade = Decimal(str(max_allocation_per_trade))
+        self.use_kelly_criterion = True  # Enable Kelly Criterion
+        self.kelly_fraction = 0.5  # Half-Kelly for safety
         self.allocated_funds = Decimal('0')  # Currently allocated to open positions
         self.realized_pnl = Decimal('0')  # Realized profit/loss
         self.unrealized_pnl = Decimal('0')  # Unrealized profit/loss from open positions
@@ -39,6 +41,48 @@ class PortfolioManager:
         max_trade = Decimal(str(current_portfolio_value)) * self.max_allocation_per_trade
         available = Decimal(str(self.get_available_funds()))
         return float(min(max_trade, available))
+
+    def calculate_kelly_allocation(self, win_rate: float, win_loss_ratio: float) -> float:
+        """
+        Calculate position size using Kelly Criterion
+        f = (bp - q) / b
+        where:
+        f = fraction of bankroll to bet
+        b = odds received on the wager (win/loss ratio)
+        p = probability of winning
+        q = probability of losing (1 - p)
+        """
+        if win_loss_ratio <= 0 or win_rate <= 0:
+            return 0.0
+            
+        p = win_rate
+        q = 1 - p
+        b = win_loss_ratio
+        
+        kelly_f = (b * p - q) / b
+        
+        # Apply fractional Kelly for safety and clamp to 0
+        safe_f = max(0.0, kelly_f * self.kelly_fraction)
+        
+        # Cap at max allocation per trade
+        return min(safe_f, float(self.max_allocation_per_trade))
+
+    def get_max_trade_amount_kelly(self, win_rate: float = 0.5, win_loss_ratio: float = 1.5) -> float:
+        """Get maximum trade amount using Kelly Criterion"""
+        if not self.use_kelly_criterion:
+            return self.get_max_trade_amount()
+            
+        kelly_pct = self.calculate_kelly_allocation(win_rate, win_loss_ratio)
+        
+        # If Kelly suggests 0 or negative, return 0 (don't trade)
+        if kelly_pct <= 0:
+            return 0.0
+            
+        current_portfolio_value = self.get_current_portfolio_value()
+        kelly_amount = Decimal(str(current_portfolio_value)) * Decimal(str(kelly_pct))
+        available = Decimal(str(self.get_available_funds()))
+        
+        return float(min(kelly_amount, available))
     
     def get_current_portfolio_value(self) -> float:
         """Get current total portfolio value including unrealized P&L"""
